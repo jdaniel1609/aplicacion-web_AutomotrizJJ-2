@@ -11,10 +11,3 @@ sqlalchemy==2.0.23
 
 # Azure SQL Database
 pyodbc==5.0.1
-
-# PostgreSQL
-psycopg2-binary==2.9.9
-
-# MySQL
-pymysql==1.1.0
-cryptography==41.0.7
