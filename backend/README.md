@@ -37,20 +37,78 @@ pip install -r requirements.txt
 Crear archivo `.env` en la raíz del proyecto con el siguiente contenido:
 
 ```env
-APP_NAME="Automotriz JJ API"
-APP_VERSION="1.0.0"
-DEBUG=True
+# ==============================================================================
+# SEGURIDAD
+# ==============================================================================
+# Clave secreta para JWT (¡CAMBIAR EN PRODUCCIÓN!)
+SECRET_KEY=56bcae35098abf25811830a51b182c5ae7ad77cc36876fdd0e9affc0845e25a882223b93f61f057985fa0f65eb220c66436aa15d5af57744d9c5a1077e3560a3
 
-SECRET_KEY="tu_clave_secreta_super_segura_cambiala_en_produccion_123456789"
-ALGORITHM="HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES=30
+# ==============================================================================
+# CORS - Origenes permitidos
+# ==============================================================================
+# Separar múltiples orígenes con comas
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:8080
 
-ALLOWED_ORIGINS="http://localhost:3000,http://localhost:5173"
+# ==============================================================================
+# TIPO DE BASE DE DATOS
+# ==============================================================================
+# Opciones: "sqlite" o "azure"
+# - sqlite: Base de datos local (por defecto)
+# - azure: Azure SQL Database en la nube
+DB_TYPE=sqlite
 
-DATABASE_URL="sqlite:///./automotriz_jj.db"
+# ==============================================================================
+# CONFIGURACIÓN DE SQLITE (Si DB_TYPE=sqlite)
+# ==============================================================================
+# No necesita configuración adicional, usa un archivo local: automotriz_jj.db
 
-DEFAULT_USERNAME="admin"
-DEFAULT_PASSWORD="admin123"
+# ==============================================================================
+# CONFIGURACIÓN DE AZURE SQL DATABASE (Si DB_TYPE=azure)
+# ==============================================================================
+# Solo completar estos campos si DB_TYPE=azure
+
+# Servidor de Azure SQL (formato: tu-servidor.database.windows.net)
+AZURE_SQL_SERVER=tu-servidor.database.windows.net
+
+# Nombre de la base de datos
+AZURE_SQL_DATABASE=automotriz_jj_db
+
+# Usuario administrador de la base de datos
+AZURE_SQL_USERNAME=sqladmin
+
+# Contraseña del usuario administrador
+AZURE_SQL_PASSWORD=tu-contraseña-segura
+
+# Driver ODBC instalado en tu sistema
+# Opciones comunes:
+# - {ODBC Driver 18 for SQL Server} (Recomendado - más reciente)
+# - {ODBC Driver 17 for SQL Server}
+# - {SQL Server} (Windows nativo)
+AZURE_SQL_DRIVER={ODBC Driver 18 for SQL Server}
+
+# Puerto de conexión (por defecto 1433)
+AZURE_SQL_PORT=1433
+
+# ==============================================================================
+# NOTAS IMPORTANTES
+# ==============================================================================
+# 
+# 1. NUNCA subas este archivo .env al repositorio
+# 2. Crea un archivo .env copiando este .env.example
+# 3. Modifica los valores en .env según tu configuración
+# 4. Asegúrate de que .env esté en tu .gitignore
+# 
+# PARA USAR SQLITE (Desarrollo local):
+# - Mantén DB_TYPE=sqlite
+# - No necesitas configurar las variables AZURE_SQL_*
+# 
+# PARA USAR AZURE SQL DATABASE (Producción):
+# - Cambia DB_TYPE=azure
+# - Configura todas las variables AZURE_SQL_*
+# - Asegúrate de tener ODBC Driver instalado
+# - Configura el firewall de Azure para permitir tu IP
+# 
+# ==============================================================================
 ```
 
 ### 4. Ejecutar el servidor
