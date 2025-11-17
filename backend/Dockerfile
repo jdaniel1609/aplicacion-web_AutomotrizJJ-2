@@ -31,24 +31,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Limpieza
     && rm -rf /var/lib/apt/lists/*
 
-# Instalar Microsoft ODBC Driver 18 para SQL Server
-RUN curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - \
-    && curl https://packages.microsoft.com/config/debian/11/prod.list > /etc/apt/sources.list.d/mssql-release.list \
+# Instalar ODBC Driver 18 en Debian 12 (Trixie)
+RUN curl https://packages.microsoft.com/keys/microsoft.asc \
+      -o /usr/share/keyrings/microsoft.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
+      > /etc/apt/sources.list.d/mssql-release.list \
     && apt-get update \
     && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 \
     && rm -rf /var/lib/apt/lists/*
+
 
 # Establecer directorio de trabajo
 WORKDIR /app
 
 # Copiar requirements primero (para aprovechar cache de Docker)
-COPY backend/requirements.txt .
+COPY requirements.txt .
 
 # Instalar dependencias de Python
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copiar el código de la aplicación
-COPY backend/app ./app
+COPY /app ./app
 
 # Crear directorio para SQLite database (si se usa)
 RUN mkdir -p /app/data && chown -R appuser:appuser /app

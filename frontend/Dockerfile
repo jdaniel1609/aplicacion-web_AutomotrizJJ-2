@@ -16,13 +16,13 @@ LABEL description="Frontend React - Build Stage"
 WORKDIR /app
 
 # Copiar package files primero (para aprovechar cache)
-COPY frontend/package*.json ./
+COPY package*.json ./
 
 # Instalar dependencias
 RUN npm ci --only=production=false
 
 # Copiar el resto del código
-COPY frontend/ ./
+COPY / ./
 
 # Build de producción
 RUN npm run build
@@ -41,7 +41,7 @@ LABEL version="1.0"
 COPY --from=builder /app/dist /usr/share/nginx/html
 
 # Copiar configuración personalizada de Nginx
-COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # Exponer puerto 80
 EXPOSE 80
