@@ -1,111 +1,199 @@
-import logging
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from typing import Optional
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from app.services.venta_service import (
-    get_autos_disponibles,
-    registrar_venta,
-    get_ventas_by_vendedor
-)
-from app.services.auth_service import get_user
-from app.utils.security import get_current_user
+from datetime import date
 
-logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/venta", tags=["Ventas"])
+from app.routes.auth import get_current_user
+from app.services import venta_service
+
+router = APIRouter()
 
 
-class VentaCreate(BaseModel):
-    """Esquema para crear una venta"""
-    auto_id: int = Field(..., description="ID del auto")
-    tipo_compra: str = Field(..., pattern="^(Cash|Crédito)$", description="Tipo de compra: Cash o Crédito")
-    monto_fisco: str = Field(..., min_length=1, description="Monto de la venta")
-    nombre_comprador: str = Field(..., min_length=3, description="Nombre del comprador")
-    dni_comprador: str = Field(..., min_length=8, max_length=8, description="DNI del comprador")
-    contacto_comprador: str = Field(..., min_length=6, description="Contacto del comprador")
+# Modelos Pydantic
+class VentaBase(BaseModel):
+    fecha: date
+    tienda: int
+    vendedor: int
+    vehiculo: str
+    modelo: str
+    annio: int
+    precio: float
+    dni: str
+    nombre_completo: str
 
 
-@router.get("/autos")
-async def listar_autos(
-    search: Optional[str] = Query(None, description="Término de búsqueda"),
+class VentaCreate(VentaBase):
+    pass
+
+
+class VentaResponse(VentaBase):
+    id: int
+    
+    class Config:
+        from_attributes = True
+
+
+class VentaDetailResponse(BaseModel):
+    id: int
+    fecha: date
+    vehiculo: str
+    modelo: str
+    annio: int
+    precio: float
+    cliente: str
+    cliente_dni: str
+    vendedor: str
+    vendedor_codigo: int
+    tienda: str
+    distrito: str
+    provincia: str
+    departamento: str
+
+
+class VehiculoResponse(BaseModel):
+    id: int
+    vehiculo: str
+    modelo: str
+    annio: int
+    precio: float
+
+
+class VendedorResponse(BaseModel):
+    codigo: int
+    nombre: str
+    apellido: str
+
+
+class TiendaResponse(BaseModel):
+    codigo: int
+    nombre: str
+    distrito: str
+    provincia: str
+    departamento: str
+
+
+class ClienteResponse(BaseModel):
+    dni: str
+    nombre: str
+    apellido: str
+
+
+class VentasStatisticsResponse(BaseModel):
+    total_ventas: int
+    total_vendido: float
+    vehiculo_mas_vendido: dict
+    mejor_vendedor: dict
+
+
+@router.get("/ventas", response_model=List[VentaDetailResponse])
+async def get_ventas(
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
     current_user: dict = Depends(get_current_user)
 ):
-    """Lista autos disponibles con búsqueda opcional"""
-    logger.info(f"Listando autos - Usuario: {current_user['username']}, Búsqueda: {search}")
-    
-    autos = get_autos_disponibles(search)
-    
-    return {
-        "total": len(autos),
-        "autos": autos
-    }
+    """
+    Obtiene la lista de ventas con paginación
+    """
+    ventas = venta_service.get_all_ventas(limit=limit, offset=offset)
+    return ventas
 
 
-@router.post("/registrar")
-async def crear_venta(
+@router.get("/ventas/{venta_id}", response_model=VentaDetailResponse)
+async def get_venta(
+    venta_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Obtiene una venta específica por su ID
+    """
+    venta = venta_service.get_venta_by_id(venta_id)
+    
+    if not venta:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+    
+    return venta
+
+
+@router.post("/ventas", response_model=VentaResponse, status_code=201)
+async def create_venta(
     venta: VentaCreate,
     current_user: dict = Depends(get_current_user)
 ):
-    """Registra una nueva venta"""
-    username = current_user["username"]
-    user = get_user(username)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Usuario no encontrado"
-        )
-    
-    logger.info(f"Registrando venta - Vendedor: {user['full_name']} ({user['sucursal_provincia']}/{user['sucursal_distrito']})")
-    
-    # Registrar la venta
-    venta_id = registrar_venta(
-        vendedor_id=user['id'],
-        auto_id=venta.auto_id,
-        tipo_compra=venta.tipo_compra,
-        monto_fisco=venta.monto_fisco,
-        nombre_comprador=venta.nombre_comprador,
-        dni_comprador=venta.dni_comprador,
-        contacto_comprador=venta.contacto_comprador,
-        sucursal_provincia=user['sucursal_provincia'],
-        sucursal_distrito=user['sucursal_distrito'],
-        nombre_vendedor=user['full_name']
-    )
+    """
+    Crea una nueva venta
+    """
+    venta_data = venta.dict()
+    venta_id = venta_service.create_venta(venta_data)
     
     if not venta_id:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error al registrar la venta"
-        )
+        raise HTTPException(status_code=500, detail="Error al crear la venta")
     
-    return {
-        "success": True,
-        "message": "Venta registrada exitosamente",
-        "venta_id": venta_id
-    }
+    return {**venta_data, "id": venta_id}
 
 
-@router.get("/mis-ventas")
-async def obtener_mis_ventas(
-    limit: int = Query(50, ge=1, le=100),
+@router.get("/vehiculos", response_model=List[VehiculoResponse])
+async def get_vehiculos(
+    limit: int = Query(100, ge=1, le=500),
     current_user: dict = Depends(get_current_user)
 ):
-    """Obtiene las ventas del vendedor actual"""
-    username = current_user["username"]
-    user = get_user(username)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Usuario no encontrado"
-        )
-    
-    logger.info(f"Obteniendo ventas - Vendedor: {user['full_name']}")
-    
-    ventas = get_ventas_by_vendedor(user['id'], limit)
-    
-    return {
-        "total": len(ventas),
-        "vendedor": user['full_name'],
-        "sucursal": f"{user['sucursal_provincia']}/{user['sucursal_distrito']}",
-        "ventas": ventas
-    }
+    """
+    Obtiene la lista de vehículos disponibles
+    """
+    vehiculos = venta_service.get_vehiculos(limit=limit)
+    return vehiculos
+
+
+@router.get("/vendedores", response_model=List[VendedorResponse])
+async def get_vendedores(
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Obtiene la lista de vendedores
+    """
+    vendedores = venta_service.get_vendedores()
+    return vendedores
+
+
+@router.get("/tiendas", response_model=List[TiendaResponse])
+async def get_tiendas(
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Obtiene la lista de tiendas
+    """
+    tiendas = venta_service.get_tiendas()
+    return tiendas
+
+
+@router.get("/clientes", response_model=List[ClienteResponse])
+async def get_clientes(
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Obtiene la lista de clientes
+    """
+    clientes = venta_service.get_clientes()
+    return clientes
+
+
+@router.get("/ventas/vendedor/{vendedor_codigo}", response_model=List[VentaDetailResponse])
+async def get_ventas_by_vendedor(
+    vendedor_codigo: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Obtiene todas las ventas de un vendedor específico
+    """
+    ventas = venta_service.get_ventas_by_vendedor(vendedor_codigo)
+    return ventas
+
+
+@router.get("/statistics", response_model=VentasStatisticsResponse)
+async def get_statistics(
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Obtiene estadísticas generales de ventas
+    """
+    stats = venta_service.get_ventas_statistics()
+    return stats

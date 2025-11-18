@@ -5,7 +5,7 @@ import random
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
-from contextlib import contextmanager
+from contextmanager import contextmanager
 
 from app.config import settings
 
@@ -64,34 +64,6 @@ class DatabaseManager:
             else:
                 conn.commit()
                 return cursor.lastrowid if self.db_type == "sqlite" else cursor.rowcount
-    
-    def _adapt_query_for_azure(self, sqlite_query: str) -> str:
-        """Convierte una query de SQLite a SQL Server"""
-        query = sqlite_query
-        
-        # Reemplazar AUTOINCREMENT por IDENTITY
-        query = query.replace("INTEGER PRIMARY KEY AUTOINCREMENT", 
-                            "INT PRIMARY KEY IDENTITY(1,1)")
-        
-        # Reemplazar tipos de datos
-        query = query.replace("TEXT", "NVARCHAR(255)")
-        query = query.replace("REAL", "DECIMAL(18,2)")
-        query = query.replace("INTEGER", "INT")
-        query = query.replace("TIMESTAMP DEFAULT CURRENT_TIMESTAMP", 
-                            "DATETIME DEFAULT GETDATE()")
-        
-        # Reemplazar PRAGMA
-        if "PRAGMA" in query:
-            return ""  # Las pragmas no existen en SQL Server
-        
-        # Adaptar constraints de longitud
-        query = query.replace("length(", "LEN(")
-        
-        # Adaptar UNIQUE en columnas
-        if "UNIQUE NOT NULL" in query:
-            query = query.replace("UNIQUE NOT NULL", "NOT NULL UNIQUE")
-        
-        return query
 
 
 # Instancia global del gestor de base de datos
@@ -115,13 +87,6 @@ def get_db_connection():
 def wait_for_azure_db(max_retries: int = 30, retry_delay: int = 2) -> bool:
     """
     Espera a que Azure SQL Database esté disponible
-    
-    Args:
-        max_retries: Número máximo de intentos
-        retry_delay: Segundos entre intentos
-        
-    Returns:
-        True si la base de datos está disponible, False en caso contrario
     """
     if db_manager.db_type != "azure":
         return True
@@ -149,23 +114,17 @@ def wait_for_azure_db(max_retries: int = 30, retry_delay: int = 2) -> bool:
 
 def init_database():
     """
-    Inicializa la base de datos y crea las tablas con sus relaciones.
+    Inicializa la base de datos y crea las tablas según el esquema proporcionado.
     Compatible con SQLite y Azure SQL Database.
     
-    ESTRUCTURA DE RELACIONES:
-    ========================
-    vendedores (Tabla Principal)
-    ├── id (PRIMARY KEY)
-    └── Relación: registro_venta.vendedor_id → vendedores.id
-    
-    autos_disponibles (Tabla Principal)
-    ├── id (PRIMARY KEY)
-    └── Relación: registro_venta.auto_id → autos_disponibles.id
-    
-    registro_venta (Tabla Dependiente)
-    ├── id (PRIMARY KEY)
-    ├── vendedor_id (FOREIGN KEY → vendedores.id)
-    └── auto_id (FOREIGN KEY → autos_disponibles.id)
+    ESTRUCTURA DE TABLAS:
+    =====================
+    1. login - Credenciales de usuarios
+    2. vehiculos - Catálogo de vehículos disponibles
+    3. vendedor - Información de vendedores
+    4. clientes - Información de clientes
+    5. tiendas - Sucursales/tiendas de la empresa
+    6. ventas - Registro de ventas realizadas
     """
     
     # Esperar a que Azure esté disponible
@@ -181,7 +140,7 @@ def init_database():
         else:
             _init_azure_database()
         
-        logger.info("✅ Base de datos inicializada correctamente con todas las relaciones")
+        logger.info("✅ Base de datos inicializada correctamente")
         
     except Exception as e:
         logger.error(f"❌ Error al inicializar la base de datos: {e}")
@@ -194,112 +153,78 @@ def _init_sqlite_database():
     cursor = conn.cursor()
     
     try:
-        # Tabla vendedores
+        # Tabla login
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS vendedores (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                full_name TEXT NOT NULL,
-                email TEXT,
-                role TEXT DEFAULT 'vendedor',
-                codigo_vendedor TEXT UNIQUE NOT NULL,
-                sucursal_provincia TEXT NOT NULL,
-                sucursal_distrito TEXT NOT NULL,
-                is_active INTEGER DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                
-                CONSTRAINT chk_username_length CHECK(length(username) >= 3),
-                CONSTRAINT chk_codigo_vendedor_format CHECK(codigo_vendedor LIKE 'VEN%')
+            CREATE TABLE IF NOT EXISTS login (
+                usuario TEXT PRIMARY KEY,
+                password TEXT NOT NULL
             )
         ''')
         
-        # Índices para vendedores
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_vendedores_username ON vendedores(username)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_vendedores_codigo ON vendedores(codigo_vendedor)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_vendedores_provincia ON vendedores(sucursal_provincia)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_vendedores_distrito ON vendedores(sucursal_distrito)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_vendedores_active ON vendedores(is_active)')
-        
-        logger.info("✅ Tabla 'vendedores' creada con PRIMARY KEY: id")
-        
-        # Tabla autos_disponibles
+        # Tabla vehiculos
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS autos_disponibles (
+            CREATE TABLE IF NOT EXISTS vehiculos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                marca TEXT NOT NULL,
+                vehiculo TEXT NOT NULL,
                 modelo TEXT NOT NULL,
-                anio INTEGER NOT NULL,
-                precio_referencial REAL,
-                stock INTEGER DEFAULT 25,
-                is_active INTEGER DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                
-                CONSTRAINT chk_anio_valido CHECK(anio >= 2020 AND anio <= 2030),
-                CONSTRAINT chk_precio_positivo CHECK(precio_referencial > 0),
-                CONSTRAINT chk_stock_positivo CHECK(stock >= 0),
-                CONSTRAINT uq_auto UNIQUE(marca, modelo, anio)
+                annio INTEGER NOT NULL,
+                precio REAL NOT NULL
             )
         ''')
         
-        # Índices para autos_disponibles
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_autos_marca ON autos_disponibles(marca)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_autos_modelo ON autos_disponibles(modelo)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_autos_anio ON autos_disponibles(anio)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_autos_active ON autos_disponibles(is_active)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_autos_marca_modelo ON autos_disponibles(marca, modelo)')
-        
-        logger.info("✅ Tabla 'autos_disponibles' creada con PRIMARY KEY: id")
-        
-        # Tabla registro_venta
+        # Tabla vendedor
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS registro_venta (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                fecha_venta TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                vendedor_id INTEGER NOT NULL,
-                auto_id INTEGER NOT NULL,
-                tipo_compra TEXT NOT NULL CHECK(tipo_compra IN ('Cash', 'Crédito')),
-                monto_fisco TEXT NOT NULL,
-                nombre_comprador TEXT NOT NULL,
-                dni_comprador TEXT NOT NULL,
-                contacto_comprador TEXT NOT NULL,
-                sucursal_provincia TEXT NOT NULL,
-                sucursal_distrito TEXT NOT NULL,
-                nombre_vendedor TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                
-                CONSTRAINT fk_venta_vendedor 
-                    FOREIGN KEY (vendedor_id) 
-                    REFERENCES vendedores(id) 
-                    ON DELETE CASCADE 
-                    ON UPDATE CASCADE,
-                    
-                CONSTRAINT fk_venta_auto 
-                    FOREIGN KEY (auto_id) 
-                    REFERENCES autos_disponibles(id) 
-                    ON DELETE CASCADE 
-                    ON UPDATE CASCADE,
-                
-                CONSTRAINT chk_dni_length CHECK(length(dni_comprador) = 8),
-                CONSTRAINT chk_monto_not_empty CHECK(length(monto_fisco) > 0)
+            CREATE TABLE IF NOT EXISTS vendedor (
+                codigo INTEGER PRIMARY KEY,
+                nombre TEXT NOT NULL,
+                apellido TEXT NOT NULL
             )
         ''')
         
-        # Índices para registro_venta
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_venta_fecha ON registro_venta(fecha_venta)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_venta_vendedor ON registro_venta(vendedor_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_venta_auto ON registro_venta(auto_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_venta_tipo_compra ON registro_venta(tipo_compra)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_venta_dni ON registro_venta(dni_comprador)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_venta_provincia ON registro_venta(sucursal_provincia)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_venta_distrito ON registro_venta(sucursal_distrito)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_venta_fecha_vendedor ON registro_venta(fecha_venta, vendedor_id)')
+        # Tabla clientes
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS clientes (
+                dni TEXT PRIMARY KEY,
+                nombre TEXT NOT NULL,
+                apellido TEXT NOT NULL
+            )
+        ''')
         
-        logger.info("✅ Tabla 'registro_venta' creada con FOREIGN KEYS")
+        # Tabla tiendas
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS tiendas (
+                codigo INTEGER PRIMARY KEY,
+                nombre TEXT NOT NULL,
+                distrito TEXT NOT NULL,
+                provincia TEXT NOT NULL,
+                departamento TEXT NOT NULL
+            )
+        ''')
+        
+        # Tabla ventas
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ventas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha DATE NOT NULL,
+                tienda INTEGER NOT NULL,
+                vendedor INTEGER NOT NULL,
+                vehiculo TEXT NOT NULL,
+                modelo TEXT NOT NULL,
+                annio INTEGER NOT NULL,
+                precio REAL NOT NULL,
+                dni TEXT NOT NULL,
+                nombre_completo TEXT NOT NULL,
+                FOREIGN KEY (tienda) REFERENCES tiendas(codigo),
+                FOREIGN KEY (vendedor) REFERENCES vendedor(codigo),
+                FOREIGN KEY (dni) REFERENCES clientes(dni)
+            )
+        ''')
+        
         conn.commit()
+        logger.info("✅ Tablas SQLite creadas correctamente")
         
     except Exception as e:
-        logger.error(f"❌ Error en SQLite: {e}")
+        logger.error(f"❌ Error al crear tablas SQLite: {e}")
         conn.rollback()
         raise
     finally:
@@ -307,127 +232,89 @@ def _init_sqlite_database():
 
 
 def _init_azure_database():
-    """Inicializa la base de datos Azure SQL Database"""
+    """Inicializa la base de datos Azure SQL"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
-        # Verificar si las tablas ya existen
-        cursor.execute("""
-            SELECT COUNT(*) as cnt 
-            FROM INFORMATION_SCHEMA.TABLES 
-            WHERE TABLE_NAME = 'vendedores'
-        """)
-        
-        if cursor.fetchone()[0] > 0:
-            logger.info("Las tablas ya existen en Azure SQL Database")
-            return
-        
-        # Tabla vendedores
+        # Tabla login
         cursor.execute('''
-            CREATE TABLE vendedores (
-                id INT PRIMARY KEY IDENTITY(1,1),
-                username NVARCHAR(255) UNIQUE NOT NULL,
-                password_hash NVARCHAR(255) NOT NULL,
-                full_name NVARCHAR(255) NOT NULL,
-                email NVARCHAR(255),
-                role NVARCHAR(50) DEFAULT 'vendedor',
-                codigo_vendedor NVARCHAR(50) UNIQUE NOT NULL,
-                sucursal_provincia NVARCHAR(100) NOT NULL,
-                sucursal_distrito NVARCHAR(100) NOT NULL,
-                is_active INT DEFAULT 1,
-                created_at DATETIME DEFAULT GETDATE(),
-                
-                CONSTRAINT chk_username_length CHECK(LEN(username) >= 3),
-                CONSTRAINT chk_codigo_vendedor_format CHECK(codigo_vendedor LIKE 'VEN%')
+            IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'login')
+            CREATE TABLE login (
+                usuario NVARCHAR(50) PRIMARY KEY,
+                password NVARCHAR(50) NOT NULL
             )
         ''')
         
-        # Índices para vendedores
-        cursor.execute('CREATE INDEX idx_vendedores_username ON vendedores(username)')
-        cursor.execute('CREATE INDEX idx_vendedores_codigo ON vendedores(codigo_vendedor)')
-        cursor.execute('CREATE INDEX idx_vendedores_provincia ON vendedores(sucursal_provincia)')
-        cursor.execute('CREATE INDEX idx_vendedores_distrito ON vendedores(sucursal_distrito)')
-        cursor.execute('CREATE INDEX idx_vendedores_active ON vendedores(is_active)')
-        
-        logger.info("✅ Tabla 'vendedores' creada con PRIMARY KEY: id")
-        
-        # Tabla autos_disponibles
+        # Tabla vehiculos
         cursor.execute('''
-            CREATE TABLE autos_disponibles (
+            IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'vehiculos')
+            CREATE TABLE vehiculos (
                 id INT PRIMARY KEY IDENTITY(1,1),
-                marca NVARCHAR(100) NOT NULL,
+                vehiculo NVARCHAR(100) NOT NULL,
                 modelo NVARCHAR(100) NOT NULL,
-                anio INT NOT NULL,
-                precio_referencial DECIMAL(18,2),
-                stock INT DEFAULT 25,
-                is_active INT DEFAULT 1,
-                created_at DATETIME DEFAULT GETDATE(),
-                
-                CONSTRAINT chk_anio_valido CHECK(anio >= 2020 AND anio <= 2030),
-                CONSTRAINT chk_precio_positivo CHECK(precio_referencial > 0),
-                CONSTRAINT chk_stock_positivo CHECK(stock >= 0),
-                CONSTRAINT uq_auto UNIQUE(marca, modelo, anio)
+                annio INT NOT NULL,
+                precio DECIMAL(10,2) NOT NULL
             )
         ''')
         
-        # Índices para autos_disponibles
-        cursor.execute('CREATE INDEX idx_autos_marca ON autos_disponibles(marca)')
-        cursor.execute('CREATE INDEX idx_autos_modelo ON autos_disponibles(modelo)')
-        cursor.execute('CREATE INDEX idx_autos_anio ON autos_disponibles(anio)')
-        cursor.execute('CREATE INDEX idx_autos_active ON autos_disponibles(is_active)')
-        cursor.execute('CREATE INDEX idx_autos_marca_modelo ON autos_disponibles(marca, modelo)')
-        
-        logger.info("✅ Tabla 'autos_disponibles' creada con PRIMARY KEY: id")
-        
-        # Tabla registro_venta
+        # Tabla vendedor
         cursor.execute('''
-            CREATE TABLE registro_venta (
-                id INT PRIMARY KEY IDENTITY(1,1),
-                fecha_venta DATETIME DEFAULT GETDATE(),
-                vendedor_id INT NOT NULL,
-                auto_id INT NOT NULL,
-                tipo_compra NVARCHAR(20) NOT NULL CHECK(tipo_compra IN ('Cash', 'Crédito')),
-                monto_fisco NVARCHAR(50) NOT NULL,
-                nombre_comprador NVARCHAR(255) NOT NULL,
-                dni_comprador NVARCHAR(8) NOT NULL,
-                contacto_comprador NVARCHAR(20) NOT NULL,
-                sucursal_provincia NVARCHAR(100) NOT NULL,
-                sucursal_distrito NVARCHAR(100) NOT NULL,
-                nombre_vendedor NVARCHAR(255) NOT NULL,
-                created_at DATETIME DEFAULT GETDATE(),
-                
-                CONSTRAINT fk_venta_vendedor 
-                    FOREIGN KEY (vendedor_id) 
-                    REFERENCES vendedores(id) 
-                    ON DELETE CASCADE 
-                    ON UPDATE CASCADE,
-                    
-                CONSTRAINT fk_venta_auto 
-                    FOREIGN KEY (auto_id) 
-                    REFERENCES autos_disponibles(id) 
-                    ON DELETE CASCADE 
-                    ON UPDATE CASCADE,
-                
-                CONSTRAINT chk_dni_length CHECK(LEN(dni_comprador) = 8),
-                CONSTRAINT chk_monto_not_empty CHECK(LEN(monto_fisco) > 0)
+            IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'vendedor')
+            CREATE TABLE vendedor (
+                codigo INT PRIMARY KEY,
+                nombre NVARCHAR(50) NOT NULL,
+                apellido NVARCHAR(50) NOT NULL
             )
         ''')
         
-        # Índices para registro_venta
-        cursor.execute('CREATE INDEX idx_venta_fecha ON registro_venta(fecha_venta)')
-        cursor.execute('CREATE INDEX idx_venta_vendedor ON registro_venta(vendedor_id)')
-        cursor.execute('CREATE INDEX idx_venta_auto ON registro_venta(auto_id)')
-        cursor.execute('CREATE INDEX idx_venta_tipo_compra ON registro_venta(tipo_compra)')
-        cursor.execute('CREATE INDEX idx_venta_dni ON registro_venta(dni_comprador)')
-        cursor.execute('CREATE INDEX idx_venta_provincia ON registro_venta(sucursal_provincia)')
-        cursor.execute('CREATE INDEX idx_venta_distrito ON registro_venta(sucursal_distrito)')
+        # Tabla clientes
+        cursor.execute('''
+            IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'clientes')
+            CREATE TABLE clientes (
+                dni NVARCHAR(15) PRIMARY KEY,
+                nombre NVARCHAR(50) NOT NULL,
+                apellido NVARCHAR(50) NOT NULL
+            )
+        ''')
         
-        logger.info("✅ Tabla 'registro_venta' creada con FOREIGN KEYS")
+        # Tabla tiendas
+        cursor.execute('''
+            IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'tiendas')
+            CREATE TABLE tiendas (
+                codigo INT PRIMARY KEY,
+                nombre NVARCHAR(100) NOT NULL,
+                distrito NVARCHAR(100) NOT NULL,
+                provincia NVARCHAR(100) NOT NULL,
+                departamento NVARCHAR(100) NOT NULL
+            )
+        ''')
+        
+        # Tabla ventas
+        cursor.execute('''
+            IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ventas')
+            CREATE TABLE ventas (
+                id INT PRIMARY KEY IDENTITY(1,1),
+                fecha DATE NOT NULL,
+                tienda INT NOT NULL,
+                vendedor INT NOT NULL,
+                vehiculo NVARCHAR(100) NOT NULL,
+                modelo NVARCHAR(100) NOT NULL,
+                annio INT NOT NULL,
+                precio DECIMAL(10,2) NOT NULL,
+                dni NVARCHAR(15) NOT NULL,
+                nombre_completo NVARCHAR(120) NOT NULL,
+                FOREIGN KEY (tienda) REFERENCES tiendas(codigo),
+                FOREIGN KEY (vendedor) REFERENCES vendedor(codigo),
+                FOREIGN KEY (dni) REFERENCES clientes(dni)
+            )
+        ''')
+        
         conn.commit()
+        logger.info("✅ Tablas Azure SQL creadas correctamente")
         
     except Exception as e:
-        logger.error(f"❌ Error en Azure SQL: {e}")
+        logger.error(f"❌ Error al crear tablas Azure SQL: {e}")
         conn.rollback()
         raise
     finally:
@@ -435,13 +322,13 @@ def _init_azure_database():
 
 
 def seed_initial_data():
-    """Inserta datos iniciales en la base de datos"""
+    """Inserta datos iniciales en la base de datos según el script proporcionado"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
         # Verificar si ya existen datos
-        cursor.execute("SELECT COUNT(*) FROM vendedores")
+        cursor.execute("SELECT COUNT(*) FROM login")
         result = cursor.fetchone()
         count = result[0] if db_manager.db_type == "azure" else result[0]
         
@@ -449,182 +336,237 @@ def seed_initial_data():
             logger.info("Los datos iniciales ya existen, omitiendo seed...")
             return
         
-        import hashlib
-        
         logger.info("📝 Insertando datos iniciales...")
         
-        # PASO 1: Insertar VENDEDORES
-        vendedores = [
-            ('cmendoza', 'carlos2020', 'Carlos Mendoza', 'cmendoza@automotrizjj.com', 'vendedor', 'VEN001', 'LIMA', 'Miraflores'),
-            ('svargas', 'sofia2020', 'Sofía Vargas', 'svargas@automotrizjj.com', 'vendedor', 'VEN002', 'LIMA', 'Miraflores'),
-            ('mrojas', 'miguel2020', 'Miguel Rojas', 'mrojas@automotrizjj.com', 'vendedor', 'VEN003', 'LIMA', 'San Isidro'),
-            ('ldiaz', 'laura2020', 'Laura Díaz', 'ldiaz@automotrizjj.com', 'vendedor', 'VEN004', 'LIMA', 'San Isidro'),
-            ('dcruz', 'diego2020', 'Diego Cruz', 'dcruz@automotrizjj.com', 'vendedor', 'VEN005', 'LIMA', 'Surco'),
-            ('alopez', 'andrea2020', 'Andrea López', 'alopez@automotrizjj.com', 'vendedor', 'VEN006', 'LIMA', 'Surco'),
-            ('rsilva', 'roberto2020', 'Roberto Silva', 'rsilva@automotrizjj.com', 'vendedor', 'VEN007', 'LIMA', 'La Molina'),
-            ('ptorres', 'patricia2020', 'Patricia Torres', 'ptorres@automotrizjj.com', 'vendedor', 'VEN008', 'LIMA', 'La Molina'),
-            ('fcampos', 'fernando2020', 'Fernando Campos', 'fcampos@automotrizjj.com', 'vendedor', 'VEN009', 'PIURA', 'Piura Centro'),
-            ('vmorales', 'valentina2020', 'Valentina Morales', 'vmorales@automotrizjj.com', 'vendedor', 'VEN010', 'PIURA', 'Piura Centro'),
-            ('mquispe', 'marco2020', 'Marco Quispe', 'mquispe@automotrizjj.com', 'vendedor', 'VEN011', 'AYACUCHO', 'Ayacucho Centro'),
-            ('chuaman', 'carmen2020', 'Carmen Huamán', 'chuaman@automotrizjj.com', 'vendedor', 'VEN012', 'AYACUCHO', 'Ayacucho Centro'),
+        # TABLA LOGIN
+        login_data = [
+            ('ochavez', '123456'),
+            ('csoto', '123456')
         ]
         
-        for username, password, full_name, email, role, codigo, provincia, distrito in vendedores:
-            password_hash = hashlib.sha256(password.encode()).hexdigest()
-            
+        for usuario, password in login_data:
             if db_manager.db_type == "sqlite":
-                cursor.execute('''
-                    INSERT INTO vendedores (username, password_hash, full_name, email, role, codigo_vendedor, sucursal_provincia, sucursal_distrito)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (username, password_hash, full_name, email, role, codigo, provincia, distrito))
-            else:  # azure
-                cursor.execute('''
-                    INSERT INTO vendedores (username, password_hash, full_name, email, role, codigo_vendedor, sucursal_provincia, sucursal_distrito)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', username, password_hash, full_name, email, role, codigo, provincia, distrito)
+                cursor.execute('INSERT INTO login (usuario, password) VALUES (?, ?)', 
+                             (usuario, password))
+            else:
+                cursor.execute('INSERT INTO login (usuario, password) VALUES (?, ?)', 
+                             usuario, password)
         
-        logger.info(f"✅ Insertados {len(vendedores)} vendedores")
+        logger.info(f"✅ Insertados {len(login_data)} usuarios en login")
         
-        # PASO 2: Insertar AUTOS
-        autos_base = [
-            ('Toyota', 'Corolla', 85000.00),
-            ('Toyota', 'Yaris', 65000.00),
-            ('Toyota', 'RAV4', 125000.00),
-            ('Honda', 'Civic', 90000.00),
-            ('Honda', 'CR-V', 130000.00),
-            ('Honda', 'Accord', 110000.00),
-            ('Nissan', 'Sentra', 75000.00),
-            ('Nissan', 'Kicks', 80000.00),
-            ('Nissan', 'X-Trail', 120000.00),
-            ('Hyundai', 'Elantra', 78000.00),
-            ('Hyundai', 'Tucson', 115000.00),
-            ('Hyundai', 'Accent', 62000.00),
-            ('Mazda', '3', 88000.00),
-            ('Mazda', 'CX-5', 128000.00),
-            ('Mazda', '2', 68000.00),
-            ('Kia', 'Forte', 76000.00),
-            ('Kia', 'Sportage', 122000.00),
-            ('Kia', 'Rio', 64000.00),
-            ('Chevrolet', 'Cruze', 82000.00),
-            ('Chevrolet', 'Tracker', 95000.00),
-            ('Ford', 'Focus', 79000.00),
-            ('Ford', 'Escape', 118000.00),
-            ('BMW', 'Serie 3', 180000.00),
-            ('BMW', 'X3', 220000.00)
+        # TABLA VEHICULOS (continúa con todos los datos del script...)
+        vehiculos_data = [
+            ('Toyota', 'Corolla', 2018, 14500.00),
+            ('Toyota', 'Yaris', 2020, 13000.00),
+            ('Toyota', 'Hilux', 2021, 28000.00),
+            ('Toyota', 'RAV4', 2019, 24000.00),
+            ('Honda', 'Civic', 2017, 13500.00),
+            ('Honda', 'CR-V', 2021, 26000.00),
+            ('Honda', 'Fit', 2018, 11000.00),
+            ('Mazda', 'Mazda3', 2020, 17000.00),
+            ('Mazda', 'CX-5', 2019, 22000.00),
+            ('Mazda', 'Mazda6', 2017, 16000.00),
+            ('Nissan', 'Sentra', 2018, 12500.00),
+            ('Nissan', 'Versa', 2020, 11500.00),
+            ('Nissan', 'X-Trail', 2021, 25000.00),
+            ('Nissan', 'Frontier', 2019, 23000.00),
+            ('Hyundai', 'Elantra', 2017, 12000.00),
+            ('Hyundai', 'Tucson', 2021, 25000.00),
+            ('Hyundai', 'Santa Fe', 2018, 21000.00),
+            ('Kia', 'Rio', 2020, 11500.00),
+            ('Kia', 'Sportage', 2019, 20000.00),
+            ('Kia', 'Sorento', 2017, 18000.00),
+            ('Chevrolet', 'Spark', 2018, 9000.00),
+            ('Chevrolet', 'Cruze', 2019, 16000.00),
+            ('Chevrolet', 'Tracker', 2021, 23000.00),
+            ('Chevrolet', 'Equinox', 2020, 24000.00),
+            ('Ford', 'Fiesta', 2017, 9500.00),
+            ('Ford', 'Focus', 2018, 13000.00),
+            ('Ford', 'Ranger', 2021, 30000.00),
+            ('Ford', 'Escape', 2019, 22000.00),
+            ('Volkswagen', 'Gol', 2020, 10500.00),
+            ('Volkswagen', 'Jetta', 2019, 18000.00),
+            ('Volkswagen', 'Tiguan', 2021, 26000.00),
+            ('Volkswagen', 'Amarok', 2018, 27000.00),
+            ('Subaru', 'Forester', 2020, 25000.00),
+            ('Subaru', 'Impreza', 2018, 15000.00),
+            ('Subaru', 'Outback', 2021, 28000.00),
+            ('BMW', 'X1', 2019, 33000.00),
+            ('BMW', '320i', 2018, 28000.00),
+            ('BMW', 'X3', 2020, 42000.00),
+            ('Mercedes-Benz', 'C200', 2017, 30000.00),
+            ('Mercedes-Benz', 'GLA200', 2019, 35000.00),
+            ('Mercedes-Benz', 'A200', 2020, 33000.00),
+            ('Audi', 'A3', 2018, 26000.00),
+            ('Audi', 'Q3', 2020, 35000.00),
+            ('Audi', 'A4', 2021, 40000.00),
+            ('Jeep', 'Renegade', 2019, 22000.00),
+            ('Jeep', 'Compass', 2020, 26000.00),
+            ('Jeep', 'Wrangler', 2021, 45000.00),
+            ('Renault', 'Logan', 2018, 9000.00),
+            ('Renault', 'Duster', 2020, 15000.00),
+            ('Peugeot', '3008', 2019, 23000.00)
         ]
         
-        # Autos 2024
-        for marca, modelo, precio in autos_base:
+        for vehiculo, modelo, annio, precio in vehiculos_data:
             if db_manager.db_type == "sqlite":
                 cursor.execute('''
-                    INSERT INTO autos_disponibles (marca, modelo, anio, precio_referencial, stock)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (marca, modelo, 2024, precio, 25))
+                    INSERT INTO vehiculos (vehiculo, modelo, annio, precio) 
+                    VALUES (?, ?, ?, ?)
+                ''', (vehiculo, modelo, annio, precio))
             else:
                 cursor.execute('''
-                    INSERT INTO autos_disponibles (marca, modelo, anio, precio_referencial, stock)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', marca, modelo, 2024, precio, 25)
+                    INSERT INTO vehiculos (vehiculo, modelo, annio, precio) 
+                    VALUES (?, ?, ?, ?)
+                ''', vehiculo, modelo, annio, precio)
         
-        # Autos 2025
-        for marca, modelo, precio_2024 in autos_base:
-            incremento = random.randrange(25000, 75001, 10)
-            precio_2025 = precio_2024 + incremento
-            
+        logger.info(f"✅ Insertados {len(vehiculos_data)} vehículos")
+        
+        # TABLA VENDEDOR
+        vendedor_data = [
+            (1, 'Carlos', 'Gomez'),
+            (2, 'Luis', 'Fernandez'),
+            (3, 'Ana', 'Ramirez'),
+            (4, 'Maria', 'Torres'),
+            (5, 'Jorge', 'Paredes'),
+            (6, 'Lucia', 'Mendoza'),
+            (7, 'Pedro', 'Caceres'),
+            (8, 'Sofia', 'Vargas'),
+            (9, 'Andres', 'Lopez'),
+            (10, 'Valeria', 'Salazar')
+        ]
+        
+        for codigo, nombre, apellido in vendedor_data:
+            if db_manager.db_type == "sqlite":
+                cursor.execute('INSERT INTO vendedor (codigo, nombre, apellido) VALUES (?, ?, ?)', 
+                             (codigo, nombre, apellido))
+            else:
+                cursor.execute('INSERT INTO vendedor (codigo, nombre, apellido) VALUES (?, ?, ?)', 
+                             codigo, nombre, apellido)
+        
+        logger.info(f"✅ Insertados {len(vendedor_data)} vendedores")
+        
+        # TABLA CLIENTES
+        clientes_data = [
+            ('70123451', 'Carlos', 'Gomez'),
+            ('70234512', 'Luis', 'Fernandez'),
+            ('70345623', 'Ana', 'Ramirez'),
+            ('70456734', 'Maria', 'Torres'),
+            ('70567845', 'Jorge', 'Paredes'),
+            ('70678956', 'Lucia', 'Mendoza'),
+            ('70789067', 'Pedro', 'Caceres'),
+            ('70890178', 'Sofia', 'Vargas'),
+            ('70901289', 'Andres', 'Lopez'),
+            ('71012390', 'Valeria', 'Salazar'),
+            ('71123401', 'Miguel', 'Reyes'),
+            ('71234502', 'Paola', 'Montoya'),
+            ('71345603', 'Ricardo', 'Sanchez'),
+            ('71456704', 'Fiorella', 'Diaz'),
+            ('71567805', 'Hector', 'Vera'),
+            ('71678906', 'Camila', 'Rojas'),
+            ('71789007', 'Daniel', 'Quispe'),
+            ('71890108', 'Rosa', 'Huaman'),
+            ('71901209', 'Fernando', 'Vilca'),
+            ('72012310', 'Mariana', 'Castillo')
+        ]
+        
+        for dni, nombre, apellido in clientes_data:
+            if db_manager.db_type == "sqlite":
+                cursor.execute('INSERT INTO clientes (dni, nombre, apellido) VALUES (?, ?, ?)', 
+                             (dni, nombre, apellido))
+            else:
+                cursor.execute('INSERT INTO clientes (dni, nombre, apellido) VALUES (?, ?, ?)', 
+                             dni, nombre, apellido)
+        
+        logger.info(f"✅ Insertados {len(clientes_data)} clientes")
+        
+        # TABLA TIENDAS
+        tiendas_data = [
+            (1, 'Tienda Central', 'Miraflores', 'Lima', 'Lima'),
+            (2, 'Comercial Norte', 'Los Olivos', 'Lima', 'Lima'),
+            (3, 'Market Sur', 'Santiago', 'Cusco', 'Cusco'),
+            (4, 'Plaza Este', 'Yanahuara', 'Arequipa', 'Arequipa'),
+            (5, 'Super Centro', 'Trujillo', 'Trujillo', 'La Libertad')
+        ]
+        
+        for codigo, nombre, distrito, provincia, departamento in tiendas_data:
             if db_manager.db_type == "sqlite":
                 cursor.execute('''
-                    INSERT INTO autos_disponibles (marca, modelo, anio, precio_referencial, stock)
+                    INSERT INTO tiendas (codigo, nombre, distrito, provincia, departamento) 
                     VALUES (?, ?, ?, ?, ?)
-                ''', (marca, modelo, 2025, precio_2025, 25))
+                ''', (codigo, nombre, distrito, provincia, departamento))
             else:
                 cursor.execute('''
-                    INSERT INTO autos_disponibles (marca, modelo, anio, precio_referencial, stock)
+                    INSERT INTO tiendas (codigo, nombre, distrito, provincia, departamento) 
                     VALUES (?, ?, ?, ?, ?)
-                ''', marca, modelo, 2025, precio_2025, 25)
+                ''', codigo, nombre, distrito, provincia, departamento)
         
-        logger.info(f"✅ Insertados {len(autos_base) * 2} autos (2024 y 2025)")
+        logger.info(f"✅ Insertadas {len(tiendas_data)} tiendas")
+        
         conn.commit()
         
-        # PASO 3: Insertar VENTAS
-        cursor.execute('SELECT id FROM vendedores')
-        vendedor_ids = [row[0] for row in cursor.fetchall()]
+        # TABLA VENTAS - Insertar 100 registros aleatorios usando CROSS JOIN
+        logger.info("📝 Generando ventas aleatorias...")
         
-        cursor.execute('SELECT id, marca, modelo, anio, precio_referencial FROM autos_disponibles')
-        autos = cursor.fetchall()
+        cursor.execute('SELECT codigo FROM tiendas')
+        tiendas = [row[0] for row in cursor.fetchall()]
         
-        tipos_compra = ['Cash', 'Crédito']
-        nombres = ['Juan Pérez', 'María García', 'Carlos López', 'Ana Martínez', 'Luis Rodríguez', 
-                   'Carmen Silva', 'José Torres', 'Elena Flores', 'Pedro Ramírez', 'Isabel Castro']
+        cursor.execute('SELECT codigo FROM vendedor')
+        vendedores = [row[0] for row in cursor.fetchall()]
         
-        ventas_por_auto = {}
-        for auto in autos:
-            auto_id = auto[0]
-            num_ventas = random.randint(5, 20)
-            ventas_por_auto[auto_id] = (num_ventas, auto)
+        cursor.execute('SELECT vehiculo, modelo, annio, precio FROM vehiculos')
+        vehiculos = cursor.fetchall()
         
-        total_ventas = 0
-        fecha_inicio = datetime.now() - timedelta(days=180)
+        cursor.execute('SELECT dni, nombre, apellido FROM clientes')
+        clientes = cursor.fetchall()
         
-        for auto_id, (num_ventas, auto_info) in ventas_por_auto.items():
-            for _ in range(num_ventas):
-                if total_ventas >= 432:
+        ventas_count = 0
+        max_ventas = 100
+        
+        for tienda in tiendas:
+            for vendedor in vendedores:
+                for vehiculo_data in vehiculos:
+                    for cliente_data in clientes:
+                        if ventas_count >= max_ventas:
+                            break
+                        
+                        # Generar fecha aleatoria en los últimos 2 años
+                        dias_atras = random.randint(0, 730)
+                        fecha = (datetime.now() - timedelta(days=dias_atras)).strftime('%Y-%m-%d')
+                        
+                        if db_manager.db_type == "sqlite":
+                            vehiculo, modelo, annio, precio = vehiculo_data
+                            dni = cliente_data[0]
+                            nombre_completo = f"{cliente_data[1]} {cliente_data[2]}"
+                        else:
+                            vehiculo, modelo, annio, precio = vehiculo_data
+                            dni = cliente_data[0]
+                            nombre_completo = f"{cliente_data[1]} {cliente_data[2]}"
+                        
+                        if db_manager.db_type == "sqlite":
+                            cursor.execute('''
+                                INSERT INTO ventas (fecha, tienda, vendedor, vehiculo, modelo, annio, precio, dni, nombre_completo)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ''', (fecha, tienda, vendedor, vehiculo, modelo, annio, precio, dni, nombre_completo))
+                        else:
+                            cursor.execute('''
+                                INSERT INTO ventas (fecha, tienda, vendedor, vehiculo, modelo, annio, precio, dni, nombre_completo)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ''', fecha, tienda, vendedor, vehiculo, modelo, annio, precio, dni, nombre_completo)
+                        
+                        ventas_count += 1
+                    
+                    if ventas_count >= max_ventas:
+                        break
+                if ventas_count >= max_ventas:
                     break
-                
-                vendedor_id = random.choice(vendedor_ids)
-                
-                cursor.execute('''
-                    SELECT full_name, sucursal_provincia, sucursal_distrito 
-                    FROM vendedores WHERE id = ?
-                ''', (vendedor_id,))
-                vendedor_data = cursor.fetchone()
-                
-                tipo_compra = random.choice(tipos_compra)
-                nombre_comprador = random.choice(nombres)
-                dni_comprador = str(random.randint(10000000, 99999999))
-                contacto_comprador = f"9{random.randint(10000000, 99999999)}"
-                
-                precio_base = auto_info[4]
-                variacion = random.uniform(0.9, 1.1)
-                monto = int(float(precio_base) * variacion)
-                monto_texto = f"S/. {monto:,.2f}"
-                
-                dias_atras = random.randint(0, 180)
-                fecha_venta = fecha_inicio + timedelta(days=dias_atras)
-                
-                if db_manager.db_type == "sqlite":
-                    cursor.execute('''
-                        INSERT INTO registro_venta (
-                            fecha_venta, vendedor_id, auto_id, tipo_compra, monto_fisco,
-                            nombre_comprador, dni_comprador, contacto_comprador,
-                            sucursal_provincia, sucursal_distrito, nombre_vendedor
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        fecha_venta, vendedor_id, auto_id, tipo_compra, monto_texto,
-                        nombre_comprador, dni_comprador, contacto_comprador,
-                        vendedor_data[1], vendedor_data[2], vendedor_data[0]
-                    ))
-                else:
-                    cursor.execute('''
-                        INSERT INTO registro_venta (
-                            fecha_venta, vendedor_id, auto_id, tipo_compra, monto_fisco,
-                            nombre_comprador, dni_comprador, contacto_comprador,
-                            sucursal_provincia, sucursal_distrito, nombre_vendedor
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''',
-                        fecha_venta, vendedor_id, auto_id, tipo_compra, monto_texto,
-                        nombre_comprador, dni_comprador, contacto_comprador,
-                        vendedor_data[1], vendedor_data[2], vendedor_data[0]
-                    )
-                
-                total_ventas += 1
-            
-            if total_ventas >= 432:
+            if ventas_count >= max_ventas:
                 break
         
         conn.commit()
         
-        logger.info(f"✅ Insertados {total_ventas} registros de ventas")
-        logger.info("✅ Datos iniciales cargados correctamente respetando integridad referencial")
+        logger.info(f"✅ Insertadas {ventas_count} ventas")
+        logger.info("✅ Datos iniciales cargados correctamente")
         
     except Exception as e:
         logger.error(f"❌ Error al insertar datos iniciales: {e}")
