@@ -35,7 +35,7 @@ FROM nginx:alpine
 # Metadata
 LABEL maintainer="Automotriz JJ"
 LABEL description="Frontend React con Nginx"
-LABEL version="1.0"
+LABEL version="2.0"
 
 # Copiar archivos compilados desde el stage de build
 COPY --from=builder /app/dist /usr/share/nginx/html

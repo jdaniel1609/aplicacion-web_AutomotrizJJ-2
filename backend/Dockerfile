@@ -8,7 +8,7 @@ FROM python:3.11-slim
 # Metadata
 LABEL maintainer="Automotriz JJ"
 LABEL description="Backend FastAPI con soporte para SQLite y Azure SQL Database"
-LABEL version="1.0"
+LABEL version="2.0"
 
 # Variables de entorno para Python
 ENV PYTHONUNBUFFERED=1 \
